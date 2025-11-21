@@ -7,10 +7,12 @@ from datetime import datetime
 from typing import Optional
 
 from pink_views import pink_bp
+from green_topViews import green_top_bp
 
 app = Flask(__name__)
 CORS(app)
 app.register_blueprint(pink_bp)
+app.register_blueprint(green_top_bp)
 
 # 数据文件路径
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
