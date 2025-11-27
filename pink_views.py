@@ -149,7 +149,8 @@ def build_bubble_payload() -> Dict[str, Any]:
     if submit_df.empty:
         return {'bubbleData': [], 'xAxisLabels': []}
 
-    merged = submit_df.merge(title_df, on='title_ID', how='left')
+    # 使用右连接确保包含所有题目，即使没有提交记录
+    merged = title_df.merge(submit_df, on='title_ID', how='left')
     merged['timeconsume'] = pd.to_numeric(merged['timeconsume'], errors='coerce')
     merged['memory'] = pd.to_numeric(merged['memory'], errors='coerce')
 
@@ -158,26 +159,30 @@ def build_bubble_payload() -> Dict[str, Any]:
         .agg(
             knowledge=('knowledge', 'first'),
             title_score=('title_score', 'first'),
-            submission_count=('title_ID', 'count'),
+            submission_count=('title_ID', lambda x: x.notna().sum()),
             avg_timeconsume=('timeconsume', lambda x: pd.Series(x).mean(skipna=True)),
             avg_memory=('memory', lambda x: pd.Series(x).mean(skipna=True))
         )
         .reset_index()
     )
 
-    overall_time = agg['avg_timeconsume'].mean() or 1
-    overall_memory = agg['avg_memory'].mean() or 1
+    # 只计算有提交记录的题目的平均值
+    valid_time = agg['avg_timeconsume'].dropna()
+    valid_memory = agg['avg_memory'].dropna()
+    overall_time = valid_time.mean() if not valid_time.empty else 1
+    overall_memory = valid_memory.mean() if not valid_memory.empty else 1
 
-    def ratio(value: float, baseline: float) -> float:
-        if baseline == 0:
+    def ratio(baseline: float, value: float) -> float:
+        if pd.isna(value) or value == 0:
             return 0.0
-        return round((float(value) / baseline) * 100, 1)
+        return round((float(baseline) / float(value)) * 100, 1)
 
     bubble_data = []
     for _, row in agg.iterrows():
-        time_eff = ratio(row['avg_timeconsume'], overall_time)
-        memory_eff = ratio(row['avg_memory'], overall_memory)
-        comp_eff = round((time_eff + memory_eff) / 2, 1)
+        time_eff = ratio(overall_time, row['avg_timeconsume']) if pd.notna(row['avg_timeconsume']) else 0.0
+        memory_eff = ratio(overall_memory, row['avg_memory']) if pd.notna(row['avg_memory']) else 0.0
+        comp_eff = round((time_eff + memory_eff) / 2, 1) if (time_eff > 0 or memory_eff > 0) else 0.0
+        
         bubble_data.append({
             'title_ID': row['title_ID'],
             'knowledge': row['knowledge'],
@@ -223,10 +228,19 @@ def _build_state_series(df: pd.DataFrame, group_col: str, labels: List[str]) -> 
 
 def build_state_trends_payload() -> Dict[str, Any]:
     records = load_submit_records()
-    if records.empty:
-        return {'dimensionData': {'time': {}, 'knowledge': {}, 'method': {}}}
-
     title_meta = load_title_info()[['title_ID', 'knowledge']].drop_duplicates(subset=['title_ID'])
+    
+    if records.empty:
+        # 即使没有提交记录，也要返回知识点标签
+        knowledge_labels = sorted(title_meta['knowledge'].dropna().unique().tolist())
+        return {
+            'dimensionData': {
+                'time': {'xLabels': [], 'stateData': []},
+                'knowledge': {'xLabels': knowledge_labels, 'stateData': []},
+                'method': {'xLabels': [], 'stateData': []}
+            }
+        }
+
     merged = records.merge(title_meta, on='title_ID', how='left')
     merged['time_dt'] = pd.to_datetime(merged['time'], unit='s', errors='coerce')
     merged = merged.dropna(subset=['state'])
