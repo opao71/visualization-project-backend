@@ -586,8 +586,8 @@ def get_comprehensive_bluebox1():
             'comparison': tab1_raw.get('comparison', {})
         }
 
-        # Tab 2: 学习模式分布 - 需要class_name，如果只有student_id则从学生信息中获取
-        tab2_pattern_distribution = {}
+        # Tab 2: 多维度散点图 - 需要class_name，如果只有student_id则从学生信息中获取
+        tab2_scatter_data = []
         target_class_name = class_name
         if not target_class_name and student_id:
             # 从学生信息中获取class_name
@@ -600,10 +600,21 @@ def get_comprehensive_bluebox1():
                 print(f"Warning: 无法获取学生{student_id}的班级信息: {e}")
 
         if target_class_name:
-            # 直接调用analyzer而不是通过HTTP请求，避免参数传递问题
-            distribution = behavior_analyzer.get_pattern_distribution(target_class_name, month)
-            if distribution:
-                tab2_pattern_distribution = distribution
+            # 获取所有学生的特征数据用于散点图
+            features_df = behavior_analyzer.get_all_students_features(target_class_name, month)
+            if not features_df.empty:
+                # 分类学习模式
+                features_df = behavior_analyzer.classify_learning_pattern(features_df)
+                # 转换为散点图数据格式
+                for _, row in features_df.iterrows():
+                    tab2_scatter_data.append({
+                        'student_id': str(row['student_ID']),
+                        'question_count': int(row['question_count']),
+                        'correct_ratio': float(row['correct_ratio']),
+                        'submit_count': int(row['submit_count']),
+                        'active_days': int(row['active_days']),
+                        'pattern': str(row['pattern'])
+                    })
 
         # Tab 3: 编程方法偏好 - 确保数组项字段顺序：method, method_name, count, ratio, percentage
         tab3_response = get_method_preference()
@@ -654,7 +665,7 @@ def get_comprehensive_bluebox1():
 
         return jsonify({
             'tab1_basic_features': tab1_basic_features,
-            'tab2_pattern_distribution': tab2_pattern_distribution,
+            'tab2_scatter_data': tab2_scatter_data,
             'tab3_method_preference': tab3_method_preference,
             'tab4_knowledge_mastery': tab4_knowledge_mastery
         })
@@ -716,9 +727,13 @@ def get_comprehensive_bluebox2():
                 'heatmap_data': heatmap_data
             }
 
+        # 月度学习趋势
+        monthly_stats = profile_analyzer.get_monthly_stats(student_id, class_name)
+
         return jsonify({
             'hour_distribution': hour_distribution,
-            'monthly_heatmap': monthly_heatmap
+            'monthly_heatmap': monthly_heatmap,
+            'monthly_stats': monthly_stats
         })
     except Exception as e:
         return jsonify({'error': str(e), 'code': 'SERVER_ERROR'}), 500

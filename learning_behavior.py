@@ -299,17 +299,22 @@ class LearningBehaviorAnalyzer:
         pattern_counts = features_df['pattern'].value_counts().to_dict()
         total = len(features_df)
         
-        distribution = [
-            {
+        # 确保所有3种模式都包含在结果中，即使数量为0
+        all_patterns = ['探索尝试型', '广泛多样型', '集中针对型']
+        patterns_dict = {}
+        distribution = []
+        
+        for pattern in all_patterns:
+            count = pattern_counts.get(pattern, 0)
+            patterns_dict[pattern] = count
+            distribution.append({
                 'pattern': pattern,
                 'count': count,
                 'percentage': round(count / total * 100, 2) if total > 0 else 0
-            }
-            for pattern, count in pattern_counts.items()
-        ]
+            })
         
         return {
-            'patterns': pattern_counts,
+            'patterns': patterns_dict,
             'total': total,
             'distribution': distribution
         }

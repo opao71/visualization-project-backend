@@ -209,9 +209,11 @@ class LearnerProfileAnalyzer:
         # 添加前top_n个方法
         for idx, (method, count) in enumerate(top_methods.items(), 1):
             ratio = count / total_submits if total_submits > 0 else 0.0
+            # 使用方法字段本身作为方法名称，如果method是代码格式则保持原样
+            method_name = str(method) if method else f'方法{idx}'
             method_distribution.append({
                 'method': method,
-                'method_name': f'方法{idx}',
+                'method_name': method_name,
                 'count': int(count),
                 'ratio': round(ratio, 4),
                 'percentage': round(ratio * 100, 2)
