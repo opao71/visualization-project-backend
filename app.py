@@ -8,6 +8,7 @@ from typing import Optional
 
 from pink_views import pink_bp
 from green_topViews import green_top_bp
+from green_bottomViews import green_bottom_bp
 from learning_behavior import LearningBehaviorAnalyzer
 from learner_profile import LearnerProfileAnalyzer
 
@@ -15,6 +16,7 @@ app = Flask(__name__)
 CORS(app)
 app.register_blueprint(pink_bp)
 app.register_blueprint(green_top_bp)
+app.register_blueprint(green_bottom_bp)
 
 # 数据文件路径
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')

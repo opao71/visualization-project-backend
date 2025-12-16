@@ -553,4 +553,189 @@ class LearnerProfileAnalyzer:
                 'max_count': max_count,
                 'min_count': min_count
             }
+        } 
+    
+    def get_knowledge_mastery_trend(
+        self,
+        student_id,
+        class_name=None,
+        start_month=None,
+        end_month=None,
+        top_k=4,
+        knowledge_ids=None
+    ):
+        """
+        获取知识点掌握度趋势数据（用于绿色框2折线图）
+
+        参数:
+            student_id: 学生ID（必填）
+            class_name: 班级名称（可选，用于限定班级数据）
+            start_month: 起始月份（YYYY-MM，可选）
+            end_month: 结束月份（YYYY-MM，可选）
+            top_k: 自动选择的关键知识点数量（在未显式指定knowledge_ids时生效）
+            knowledge_ids: 需要返回趋势的知识点ID列表（优先级高于top_k）
+
+        返回:
+            dict: 包含 student, mastery_trend, meta
+        """
+        if not student_id:
+            return {
+                'student': {},
+                'mastery_trend': {},
+                'meta': {
+                    'start_month': start_month,
+                    'end_month': end_month,
+                    'selected_knowledge_ids': [],
+                    'total_available_knowledge': 0
+                }
+            }
+
+        # 如果未提供class_name，可以用于meta中展示，但不要用于过滤逻辑
+        # 过滤逻辑与 get_hour_distribution / get_monthly_heatmap 保持一致：
+        # - 有 class_name 时按班级限定
+        # - 无 class_name 时加载全部班级，只按 student_id 过滤
+        resolved_class_name = class_name
+        student_name = None
+        try:
+            student_info = self._load_student_info()
+            row = student_info[student_info['student_ID'] == student_id]
+            if not row.empty and resolved_class_name is None:
+                resolved_class_name = row.iloc[0]['major']
+        except Exception:
+            pass
+
+        # 加载提交记录（与其他接口保持一致）
+        if class_name:
+            df = self._load_submit_records(class_name)
+        else:
+            df = self._load_submit_records()
+
+        # 先按student_id / class_name筛选，再按月份筛选
+        df = self._filter_data(df, student_id, class_name)
+
+        if df.empty:
+            return {
+                'student': {
+                    'id': student_id,
+                    'name': student_name,
+                    'class_name': resolved_class_name
+                },
+                'mastery_trend': {},
+                'meta': {
+                    'start_month': start_month,
+                    'end_month': end_month,
+                    'selected_knowledge_ids': [],
+                    'total_available_knowledge': 0
+                }
+            }
+
+        # 处理月份范围（逻辑与get_monthly_heatmap保持一致）
+        if not start_month or not end_month:
+            months = sorted(df['month'].unique())
+            if len(months) >= 3:
+                start_month = months[-3]
+                end_month = months[-1]
+            elif len(months) > 0:
+                start_month = months[0]
+                end_month = months[-1]
+            else:
+                return {
+                    'student': {
+                        'id': student_id,
+                        'name': student_name,
+                        'class_name': resolved_class_name
+                    },
+                    'mastery_trend': {},
+                    'meta': {
+                        'start_month': start_month,
+                        'end_month': end_month,
+                        'selected_knowledge_ids': [],
+                        'total_available_knowledge': 0
+                    }
+                }
+
+        # 筛选月份范围
+        df = df[(df['month'] >= start_month) & (df['month'] <= end_month)]
+        if df.empty:
+            return {
+                'student': {
+                    'id': student_id,
+                    'name': student_name,
+                    'class_name': resolved_class_name
+                },
+                'mastery_trend': {},
+                'meta': {
+                    'start_month': start_month,
+                    'end_month': end_month,
+                    'selected_knowledge_ids': [],
+                    'total_available_knowledge': 0
+                }
+            }
+
+        # 合并题目信息以获得knowledge字段
+        title_info = self._load_title_info()
+        if 'knowledge' not in df.columns:
+            df = df.merge(title_info[['title_ID', 'knowledge']], on='title_ID', how='left')
+
+        # 统计每个知识点的整体掌握度（用于选择top_k）
+        knowledge_groups = df.groupby('knowledge')
+        all_knowledge_ids = sorted(knowledge_groups.groups.keys())
+
+        overall_mastery = []
+        for knowledge_id, group_df in knowledge_groups:
+            submit_count = len(group_df)
+            correct_count = len(group_df[group_df['state'].isin(['Absolutely_Correct', 'Partially_Correct'])])
+            mastery = correct_count / submit_count if submit_count > 0 else 0.0
+            overall_mastery.append({
+                'knowledge_id': knowledge_id,
+                'mastery': mastery
+            })
+
+        # 确定要返回的知识点列表
+        if knowledge_ids:
+            selected_ids = [kid for kid in knowledge_ids if kid in all_knowledge_ids]
+        else:
+            overall_mastery.sort(key=lambda x: x['mastery'])
+            selected_ids = [item['knowledge_id'] for item in overall_mastery[:top_k]]
+
+        # 构建趋势数据
+        mastery_trend = {}
+        for knowledge_id in selected_ids:
+            k_df = df[df['knowledge'] == knowledge_id]
+            if k_df.empty:
+                continue
+
+            month_groups = k_df.groupby('month')
+            series = []
+            for month, month_df in month_groups:
+                submit_count = len(month_df)
+                correct_count = len(month_df[month_df['state'].isin(['Absolutely_Correct', 'Partially_Correct'])])
+                mastery = correct_count / submit_count if submit_count > 0 else 0.0
+                series.append({
+                    'month': month,
+                    'mastery': round(mastery, 4),
+                    'mastery_percentage': round(mastery * 100, 2)
+                })
+
+            series.sort(key=lambda x: x['month'])
+
+            mastery_trend[knowledge_id] = {
+                'knowledge_id': knowledge_id,
+                'knowledge_name': f'知识点{knowledge_id}',
+                'series': series
+            }
+
+        return {
+            'student': {
+                'id': student_id,
+                'name': student_name,
+                'class_name': resolved_class_name
+            },
+            'mastery_trend': mastery_trend,
+            'meta': {
+                'start_month': start_month,
+                'end_month': end_month,
+                'selected_knowledge_ids': list(mastery_trend.keys()),
+                'total_available_knowledge': len(all_knowledge_ids)
+            }
         }
