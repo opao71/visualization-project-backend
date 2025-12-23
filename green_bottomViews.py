@@ -54,3 +54,28 @@ def get_knowledge_mastery_trend():
         return jsonify({'error': str(e), 'code': 'SERVER_ERROR'}), 500
 
 
+@green_bottom_bp.route('/green/box2/learning-mode-analysis', methods=['GET'])
+def get_learning_mode_analysis():
+    """
+    获取学习模式分析数据（绿色框2 - 4个散点图）
+    
+    路径: GET /api/green/box2/learning-mode-analysis
+    """
+    try:
+        class_name = request.args.get('class')
+        student_id = request.args.get('student_ID')
+        month = request.args.get('month')
+        
+        # 参数验证
+        if month and len(month) != 7:  # YYYY-MM格式
+            return jsonify({'error': '月份格式不正确，应为YYYY-MM', 'code': 'INVALID_PARAMETER'}), 400
+        
+        result = profile_analyzer.get_learning_mode_analysis(
+            class_name=class_name,
+            student_id=student_id,
+            month=month
+        )
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e), 'code': 'SERVER_ERROR'}), 500

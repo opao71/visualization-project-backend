@@ -252,6 +252,10 @@ def build_state_trends_payload() -> Dict[str, Any]:
     if not time_df.empty:
         time_df['week_start'] = time_df['time_dt'].dt.to_period('W').dt.start_time
         unique_weeks = sorted(time_df['week_start'].dropna().unique().tolist())
+        
+        # 兼容不同 pandas 版本：确保所有元素都是 Timestamp 对象
+        unique_weeks = [pd.Timestamp(wk) if not isinstance(wk, pd.Timestamp) else wk for wk in unique_weeks]
+
         week_labels = {wk: f"第{i + 1}周({wk.strftime('%Y-%m-%d')})" for i, wk in enumerate(unique_weeks)}
         time_df['time_bucket'] = time_df['week_start'].map(week_labels)
         ordered_time_labels = [week_labels[wk] for wk in unique_weeks]

@@ -739,3 +739,299 @@ class LearnerProfileAnalyzer:
                 'total_available_knowledge': len(all_knowledge_ids)
             }
         }
+    
+    def get_learning_mode_analysis(self, class_name=None, student_id=None, month=None):
+        """
+        获取学习模式分析数据（用于绿色框2 - 4个散点图）
+        
+        参数:
+            class_name: 班级名称（可选，如 Class1）
+            student_id: 学生ID（可选）
+            month: 月份筛选（可选，格式：YYYY-MM）
+        
+        返回:
+            dict: 包含4个散点图的数据
+        """
+        import numpy as np
+        from scipy.stats import pearsonr
+        
+        # 加载提交记录
+        if class_name:
+            df = self._load_submit_records(class_name)
+        else:
+            df = self._load_submit_records()
+        
+        # 筛选数据
+        df = self._filter_data(df, student_id, class_name, month)
+        
+        if df.empty:
+            return {
+                'class': class_name,
+                'student': student_id,
+                'month': month,
+                'scatter_plots': {
+                    'learning_duration': {'title': '知识掌握程度 vs 学习时长', 'x_axis_label': '学习时长', 'y_axis_label': '知识掌握程度(%)', 'data': [], 'statistics': {}},
+                    'coding_habits': {'title': '知识掌握程度 vs 编程习惯', 'x_axis_label': '编程习惯', 'y_axis_label': '知识掌握程度(%)', 'data': [], 'statistics': {}},
+                    'average_score': {'title': '知识掌握程度 vs 平均得分', 'x_axis_label': '平均得分', 'y_axis_label': '知识掌握程度(%)', 'data': [], 'statistics': {}},
+                    'submit_count': {'title': '知识掌握程度 vs 提交次数', 'x_axis_label': '提交次数', 'y_axis_label': '知识掌握程度(%)', 'data': [], 'statistics': {}}
+                }
+            }
+        
+        # 加载知识点掌握度数据
+        knowledge_mastery_df = self._load_knowledge_mastery()
+        
+        # 加载学生信息（用于获取学生名称）
+        student_info_df = self._load_student_info()
+        
+        # 按学生分组计算各项指标
+        student_stats = []
+        student_groups = df.groupby('student_ID')
+        
+        for student_id, student_df in student_groups:
+            # 1. 学习时长（累加timeconsume，秒转小时）
+            if 'timeconsume' in student_df.columns:
+                # 确保timeconsume是数值类型
+                timeconsume_numeric = pd.to_numeric(student_df['timeconsume'], errors='coerce').fillna(0)
+                learning_duration = timeconsume_numeric.sum() / 3600.0
+            else:
+                # 如果没有timeconsume，用时间跨度估算
+                if 'datetime' in student_df.columns:
+                    time_span = (student_df['datetime'].max() - student_df['datetime'].min()).total_seconds() / 3600.0
+                    learning_duration = max(time_span, 0.1)  # 至少0.1小时
+                else:
+                    learning_duration = 0.0
+            
+            # 2. 平均得分（确保score是数值类型）
+            if 'score' in student_df.columns:
+                score_numeric = pd.to_numeric(student_df['score'], errors='coerce').fillna(0)
+                average_score = score_numeric.mean()
+            else:
+                average_score = 0.0
+            
+            # 3. 提交次数
+            submit_count = len(student_df)
+            
+            # 4. 编程习惯得分（基于方法使用的一致性、多样性）
+            coding_habits_score = self._calculate_coding_habits(student_df)
+            
+            # 5. 知识掌握程度（从individual_knowledge_mastery获取平均值）
+            student_mastery = knowledge_mastery_df[knowledge_mastery_df['student_ID'] == student_id]
+            if not student_mastery.empty:
+                # 确保knowledge_mastery_score是数值类型
+                mastery_scores = pd.to_numeric(student_mastery['knowledge_mastery_score'], errors='coerce').fillna(0)
+                mastery_avg = mastery_scores.mean()
+                mastery_percentage = min(mastery_avg * 100, 80.0)  # 限制在0-80%
+            else:
+                mastery_percentage = 0.0
+            
+            # 获取学生名称
+            student_name = None
+            if not student_info_df.empty:
+                student_row = student_info_df[student_info_df['student_ID'] == student_id]
+                if not student_row.empty:
+                    student_name = f"学生{student_id[:8]}"  # 简化显示
+            
+            student_stats.append({
+                'student_ID': student_id,
+                'student_name': student_name,
+                'learning_duration': learning_duration,
+                'average_score': average_score,
+                'submit_count': submit_count,
+                'coding_habits': coding_habits_score,
+                'mastery_percentage': mastery_percentage
+            })
+        
+        # 构建4个散点图的数据
+        scatter_plots = {}
+        
+        # 1. learning_duration
+        learning_duration_data = [
+            {
+                'student_ID': s['student_ID'],
+                'x_value': round(s['learning_duration'], 2),
+                'y_value': round(s['mastery_percentage'], 2),
+                'student_name': s['student_name']
+            }
+            for s in student_stats if s['mastery_percentage'] > 0
+        ]
+        scatter_plots['learning_duration'] = self._build_scatter_plot(
+            '知识掌握程度 vs 学习时长',
+            '学习时长',
+            '知识掌握程度(%)',
+            learning_duration_data,
+            'learning_duration'
+        )
+        
+        # 2. coding_habits
+        coding_habits_data = [
+            {
+                'student_ID': s['student_ID'],
+                'x_value': round(s['coding_habits'], 4),
+                'y_value': round(s['mastery_percentage'], 2),
+                'student_name': s['student_name']
+            }
+            for s in student_stats if s['mastery_percentage'] > 0
+        ]
+        scatter_plots['coding_habits'] = self._build_scatter_plot(
+            '知识掌握程度 vs 编程习惯',
+            '编程习惯',
+            '知识掌握程度(%)',
+            coding_habits_data,
+            'coding_habits'
+        )
+        
+        # 3. average_score
+        average_score_data = [
+            {
+                'student_ID': s['student_ID'],
+                'x_value': round(s['average_score'], 2),
+                'y_value': round(s['mastery_percentage'], 2),
+                'student_name': s['student_name']
+            }
+            for s in student_stats if s['mastery_percentage'] > 0
+        ]
+        scatter_plots['average_score'] = self._build_scatter_plot(
+            '知识掌握程度 vs 平均得分',
+            '平均得分',
+            '知识掌握程度(%)',
+            average_score_data,
+            'average_score'
+        )
+        
+        # 4. submit_count
+        submit_count_data = [
+            {
+                'student_ID': s['student_ID'],
+                'x_value': s['submit_count'],
+                'y_value': round(s['mastery_percentage'], 2),
+                'student_name': s['student_name']
+            }
+            for s in student_stats if s['mastery_percentage'] > 0
+        ]
+        scatter_plots['submit_count'] = self._build_scatter_plot(
+            '知识掌握程度 vs 提交次数',
+            '提交次数',
+            '知识掌握程度(%)',
+            submit_count_data,
+            'submit_count'
+        )
+        
+        return {
+            'class': class_name,
+            'student': student_id,
+            'month': month,
+            'scatter_plots': scatter_plots
+        }
+    
+    def _calculate_coding_habits(self, student_df):
+        """
+        计算编程习惯得分（0-1之间）
+        基于方法使用的一致性、多样性等指标
+        """
+        if 'method' not in student_df.columns or student_df.empty:
+            return 0.0
+        
+        # 过滤有效方法
+        valid_methods = student_df['method'].dropna()
+        if valid_methods.empty:
+            return 0.0
+        
+        # 1. 方法使用的一致性：同一题目使用相同方法的比例
+        if 'title_ID' in student_df.columns:
+            title_method_groups = student_df.groupby('title_ID')['method']
+            consistency_scores = []
+            for title_id, methods in title_method_groups:
+                if len(methods) > 1:
+                    # 计算该题目最常用方法的占比
+                    method_counts = methods.value_counts()
+                    most_common_ratio = method_counts.iloc[0] / len(methods)
+                    consistency_scores.append(most_common_ratio)
+            method_consistency = np.mean(consistency_scores) if consistency_scores else 0.5
+        else:
+            method_consistency = 0.5
+        
+        # 2. 方法使用的多样性：使用不同方法的数量 / 总题目数
+        unique_methods = valid_methods.nunique()
+        total_questions = student_df['title_ID'].nunique() if 'title_ID' in student_df.columns else len(student_df)
+        method_diversity = min(unique_methods / max(total_questions, 1), 1.0)
+        
+        # 3. 方法选择的合理性：正确率与方法的关联
+        if 'state' in student_df.columns:
+            correct_states = ['Absolutely_Correct', 'Partially_Correct']
+            correct_df = student_df[student_df['state'].isin(correct_states)]
+            if len(correct_df) > 0:
+                # 计算每个方法的正确率
+                method_correctness = correct_df.groupby('method').size() / student_df.groupby('method').size()
+                method_effectiveness = method_correctness.mean() if not method_correctness.empty else 0.5
+            else:
+                method_effectiveness = 0.5
+        else:
+            method_effectiveness = 0.5
+        
+        # 综合得分（根据文档中的公式）
+        coding_habits_score = (
+            method_consistency * 0.4 +
+            method_diversity * 0.3 +
+            method_effectiveness * 0.3
+        )
+        
+        return round(coding_habits_score, 4)
+    
+    def _build_scatter_plot(self, title, x_label, y_label, data, plot_type):
+        """
+        构建散点图数据，包括统计信息
+        """
+        if not data:
+            return {
+                'title': title,
+                'x_axis_label': x_label,
+                'y_axis_label': y_label,
+                'data': [],
+                'statistics': {
+                    'x_min': 0,
+                    'x_max': 0,
+                    'y_min': 0,
+                    'y_max': 80,
+                    'correlation': 0.0,
+                    'data_count': 0
+                }
+            }
+        
+        x_values = [d['x_value'] for d in data]
+        y_values = [d['y_value'] for d in data]
+        
+        # 计算统计信息
+        x_min = min(x_values)
+        x_max = max(x_values)
+        y_min = min(y_values)
+        y_max = min(max(y_values), 80)  # Y轴最大值为80
+        
+        # 计算相关系数
+        try:
+            from scipy.stats import pearsonr
+            import numpy as np
+            correlation, _ = pearsonr(x_values, y_values)
+            correlation = round(correlation, 2) if not np.isnan(correlation) else 0.0
+        except:
+            correlation = 0.0
+        
+        # 根据plot_type设置合理的x_max范围
+        if plot_type == 'coding_habits':
+            x_max = min(x_max, 1.0)
+        elif plot_type == 'average_score':
+            x_max = min(x_max, 4.0)
+        
+        return {
+            'title': title,
+            'x_axis_label': x_label,
+            'y_axis_label': y_label,
+            'data': data,
+            'statistics': {
+                'x_min': round(x_min, 2),
+                'x_max': round(x_max, 2),
+                'y_min': round(y_min, 2),
+                'y_max': round(y_max, 2),
+                'correlation': correlation,
+                'data_count': len(data)
+            }
+        }
