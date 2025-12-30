@@ -8,7 +8,7 @@ from typing import Optional
 
 from pink_views import pink_bp
 from green_topViews import green_top_bp
-from green_bottomViews import green_bottom_bp
+from green_box2_views import green_box2_bp
 from learning_behavior import LearningBehaviorAnalyzer
 from learner_profile import LearnerProfileAnalyzer
 
@@ -16,7 +16,7 @@ app = Flask(__name__)
 CORS(app)
 app.register_blueprint(pink_bp)
 app.register_blueprint(green_top_bp)
-app.register_blueprint(green_bottom_bp)
+app.register_blueprint(green_box2_bp)
 
 # 数据文件路径
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
@@ -573,50 +573,109 @@ def get_comprehensive_bluebox1():
         student_id = request.args.get('student_id')
         class_name = request.args.get('class_name')
         month = request.args.get('month')
+        
+        print(f"DEBUG comprehensive-bluebox1: student_id={student_id}, class_name={class_name}, month={month}")
 
-        # 复用已优化的接口函数（它们已优先从CSV读取）
-        # Tab 1: 基础特征 - 根据文档，不包含pattern_ratio字段
-        tab1_response = get_behavior_features()
-        tab1_raw = tab1_response.get_json() if tab1_response.status_code == 200 else {}
-        # 移除pattern_ratio字段，确保字段顺序与文档一致
+        # Tab 1: 基础特征 - 直接复用get_behavior_features的逻辑，确保参数正确传递
         tab1_basic_features = {
-            'submit_count': tab1_raw.get('submit_count', 0),
-            'active_days': tab1_raw.get('active_days', 0),
-            'question_count': tab1_raw.get('question_count', 0),
-            'correct_ratio': tab1_raw.get('correct_ratio', 0.0),
-            'pattern': tab1_raw.get('pattern'),
-            'comparison': tab1_raw.get('comparison', {})
+            'submit_count': 0,
+            'active_days': 0,
+            'question_count': 0,
+            'correct_ratio': 0.0,
+            'pattern': None,
+            'comparison': {}
         }
-
-        # Tab 2: 多维度散点图 - 需要class_name，如果只有student_id则从学生信息中获取
-        tab2_scatter_data = []
-        target_class_name = class_name
-        if not target_class_name and student_id:
-            # 从学生信息中获取class_name
-            try:
-                df = pd.read_csv(STUDENT_INFO_FILE)
-                student_info = df[df['student_ID'] == student_id]
-                if not student_info.empty:
-                    target_class_name = student_info.iloc[0]['major']
-            except Exception as e:
-                print(f"Warning: 无法获取学生{student_id}的班级信息: {e}")
-
-        if target_class_name:
-            # 获取所有学生的特征数据用于散点图
-            features_df = behavior_analyzer.get_all_students_features(target_class_name, month)
-            if not features_df.empty:
-                # 分类学习模式
-                features_df = behavior_analyzer.classify_learning_pattern(features_df)
-                # 转换为散点图数据格式
-                for _, row in features_df.iterrows():
-                    tab2_scatter_data.append({
-                        'student_id': str(row['student_ID']),
-                        'question_count': int(row['question_count']),
-                        'correct_ratio': float(row['correct_ratio']),
+        
+        tab1_loaded_from_csv = False
+        
+        # 优先从CSV读取（如果没有月份筛选）
+        if not month and student_id:
+            df = load_csv_if_exists(STUDENT_BEHAVIOR_FEATURES, 'student_behavior_features')
+            if df is not None:
+                student_data = df[df['student_ID'] == student_id]
+                if not student_data.empty:
+                    row = student_data.iloc[0]
+                    # 计算对比数据（从CSV中计算平均值）
+                    comparison = {
+                        'submit_count_avg': float(df['submit_count'].mean()),
+                        'active_days_avg': float(df['active_days'].mean()),
+                        'question_count_avg': float(df['question_count'].mean()),
+                        'correct_ratio_avg': float(df['correct_ratio_x'].mean())
+                    }
+                    
+                    tab1_basic_features = {
                         'submit_count': int(row['submit_count']),
                         'active_days': int(row['active_days']),
-                        'pattern': str(row['pattern'])
-                    })
+                        'question_count': int(row['question_count']),
+                        'correct_ratio': float(row['correct_ratio_x']),
+                        'pattern': str(row['pattern']),
+                        'comparison': comparison
+                    }
+                    tab1_loaded_from_csv = True
+        
+        # 如果有月份筛选或CSV不存在，使用实时计算
+        if not tab1_loaded_from_csv:
+            features = behavior_analyzer.get_behavior_features(student_id, class_name, month)
+            
+            if student_id:
+                pattern = behavior_analyzer.get_student_pattern(student_id, class_name, month)
+            else:
+                pattern = None
+            
+            # 获取comparison数据
+            comparison_raw = behavior_analyzer.get_comparison_data(student_id, class_name, month)
+            comparison = {
+                'submit_count_avg': comparison_raw.get('submit_count_avg', 0),
+                'active_days_avg': comparison_raw.get('active_days_avg', 0),
+                'question_count_avg': comparison_raw.get('question_count_avg', 0),
+                'correct_ratio_avg': comparison_raw.get('correct_ratio_avg', 0.0)
+            }
+            
+            tab1_basic_features = {
+                'submit_count': features.get('submit_count', 0),
+                'active_days': features.get('active_days', 0),
+                'question_count': features.get('question_count', 0),
+                'correct_ratio': features.get('correct_ratio', 0.0),
+                'pattern': pattern,
+                'comparison': comparison
+            }
+
+        # Tab 2: 学习模式 - 如果选择学生，显示该学生的学习模式；如果选择班级，显示班级分布（散点图）
+        tab2_scatter_data = []
+        
+        if student_id:
+            # 选择学生：显示该学生的学习模式（单个模式）- 柱状图数据
+            student_pattern = tab1_basic_features.get('pattern')
+            print(f"DEBUG: student_id={student_id}, student_pattern={student_pattern}")
+            # 即使pattern为None，也返回柱状图数据（显示为"未知"或默认模式）
+            all_patterns = ['探索尝试型', '广泛多样型', '集中针对型']
+            for pattern in all_patterns:
+                tab2_scatter_data.append({
+                    'pattern': pattern,
+                    'count': 1 if pattern == student_pattern else 0,
+                    'is_current_student': pattern == student_pattern
+                })
+            print(f"DEBUG: tab2_scatter_data (student mode): {len(tab2_scatter_data)} items")
+        else:
+            # 选择班级：显示班级的学习模式分布（散点图数据）
+            target_class_name = class_name
+            if target_class_name:
+                # 获取所有学生的特征数据用于散点图
+                features_df = behavior_analyzer.get_all_students_features(target_class_name, month)
+                if not features_df.empty:
+                    # 分类学习模式
+                    features_df = behavior_analyzer.classify_learning_pattern(features_df)
+                    # 转换为散点图数据格式
+                    for _, row in features_df.iterrows():
+                        tab2_scatter_data.append({
+                            'student_id': str(row['student_ID']),
+                            'question_count': int(row['question_count']),
+                            'correct_ratio': float(row['correct_ratio']),
+                            'submit_count': int(row['submit_count']),
+                            'active_days': int(row['active_days']),
+                            'pattern': str(row['pattern'])
+                        })
+                print(f"DEBUG: tab2_scatter_data (class mode): {len(tab2_scatter_data)} items")
 
         # Tab 3: 编程方法偏好 - 确保数组项字段顺序：method, method_name, count, ratio, percentage
         tab3_response = get_method_preference()
