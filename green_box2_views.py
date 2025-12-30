@@ -218,35 +218,58 @@ def calculate_learning_duration(submit_df: pd.DataFrame) -> float:
 
 def calculate_coding_habits(submit_df: pd.DataFrame) -> float:
     """计算编程习惯得分（0-1）"""
-    if submit_df.empty or 'method' not in submit_df.columns or 'title_ID' not in submit_df.columns:
+    if submit_df.empty:
         return 0.0
     
-    # 方法使用的一致性（同一题目使用相同方法的比例）
-    title_method_groups = submit_df.groupby('title_ID')['method'].apply(lambda x: x.nunique())
-    consistency = (title_method_groups == 1).sum() / len(title_method_groups) if len(title_method_groups) > 0 else 0.0
+    # 检查必要的列是否存在
+    has_method = 'method' in submit_df.columns
+    has_title = 'title_ID' in submit_df.columns
     
-    # 方法使用的多样性（使用不同方法的数量 / 总题目数）
-    unique_methods = submit_df['method'].nunique()
-    unique_titles = submit_df['title_ID'].nunique()
-    diversity = min(unique_methods / unique_titles, 1.0) if unique_titles > 0 else 0.0
+    if not has_method or not has_title:
+        # 如果没有method或title_ID列，返回一个默认值（比如0.5），确保数据点能显示
+        return 0.5
     
-    # 方法选择的合理性（正确率与方法的关联度）
-    if 'state' in submit_df.columns:
-        correct_states = ['Absolutely_Correct', 'Partially_Correct']
-        submit_df['is_correct'] = submit_df['state'].isin(correct_states)
-        method_correct_rate = submit_df.groupby('method')['is_correct'].mean()
-        effectiveness = method_correct_rate.mean() if len(method_correct_rate) > 0 else 0.0
-    else:
-        effectiveness = 0.0
+    # 过滤掉method和title_ID为空的数据
+    valid_df = submit_df.dropna(subset=['method', 'title_ID'])
+    if valid_df.empty:
+        return 0.5
     
-    # 综合得分
-    coding_habits_score = (
-        consistency * 0.4 +
-        diversity * 0.3 +
-        effectiveness * 0.3
-    )
-    
-    return round(max(0.0, min(1.0, coding_habits_score)), 4)
+    try:
+        # 方法使用的一致性（同一题目使用相同方法的比例）
+        title_method_groups = valid_df.groupby('title_ID')['method'].apply(lambda x: x.nunique())
+        if len(title_method_groups) > 0:
+            consistency = (title_method_groups == 1).sum() / len(title_method_groups)
+        else:
+            consistency = 0.0
+        
+        # 方法使用的多样性（使用不同方法的数量 / 总题目数）
+        unique_methods = valid_df['method'].nunique()
+        unique_titles = valid_df['title_ID'].nunique()
+        diversity = min(unique_methods / unique_titles, 1.0) if unique_titles > 0 else 0.0
+        
+        # 方法选择的合理性（正确率与方法的关联度）
+        if 'state' in valid_df.columns:
+            correct_states = ['Absolutely_Correct', 'Partially_Correct']
+            valid_df = valid_df.copy()
+            valid_df['is_correct'] = valid_df['state'].isin(correct_states)
+            method_correct_rate = valid_df.groupby('method')['is_correct'].mean()
+            effectiveness = method_correct_rate.mean() if len(method_correct_rate) > 0 else 0.0
+        else:
+            effectiveness = 0.0
+        
+        # 综合得分
+        coding_habits_score = (
+            consistency * 0.4 +
+            diversity * 0.3 +
+            effectiveness * 0.3
+        )
+        
+        # 确保返回值在0-1之间，如果为0则返回一个小的默认值，确保数据点可见
+        result = round(max(0.01, min(1.0, coding_habits_score)), 4)
+        return result
+    except Exception as e:
+        print(f"Warning: 计算编程习惯失败: {e}")
+        return 0.5
 
 
 def calculate_average_score(submit_df: pd.DataFrame) -> float:
@@ -439,6 +462,9 @@ def build_learning_mode_analysis_payload(
                 
                 # 编程习惯
                 coding_habits = calculate_coding_habits(student_submit_df)
+                # 确保编程习惯值有效（不为0或NaN）
+                if pd.isna(coding_habits) or coding_habits <= 0:
+                    coding_habits = 0.5  # 默认值
                 student_data_coding_habits.append({
                     'student_ID': sid,
                     'x_value': coding_habits,
@@ -467,9 +493,10 @@ def build_learning_mode_analysis_payload(
                     'x_value': 0.0,
                     'y_value': mastery
                 })
+                # 编程习惯使用默认值0.5而不是0，确保数据点可见
                 student_data_coding_habits.append({
                     'student_ID': sid,
-                    'x_value': 0.0,
+                    'x_value': 0.5,
                     'y_value': mastery
                 })
                 student_data_average_score.append({
