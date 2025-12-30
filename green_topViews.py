@@ -193,6 +193,41 @@ def calculate_student_accuracy(student_id: str, submit_records: pd.DataFrame) ->
     return {'accuracy': accuracy, 'total_submits': total}
 
 
+def batch_calculate_student_stats(student_ids: List[str], 
+                                   individual_knowledge: pd.DataFrame,
+                                   submit_records: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
+    """批量计算学生统计信息（优化性能）"""
+    stats = {}
+    
+    # 批量计算掌握度
+    mastery_data = individual_knowledge[individual_knowledge['student_ID'].isin(student_ids)]
+    mastery_by_student = mastery_data.groupby('student_ID')['knowledge_mastery_score'].mean() * 100
+    
+    # 批量计算准确率和提交次数
+    submit_data = submit_records[submit_records['student_ID'].isin(student_ids)]
+    
+    if 'state' in submit_data.columns:
+        accuracy_data = submit_data.groupby('student_ID').agg({
+            'title_ID': 'count',  # 总提交次数
+            'state': lambda x: (x == 'Absolutely_Correct').sum()  # 正确次数
+        })
+        accuracy_data.columns = ['total_submits', 'correct_submits']
+        accuracy_data['accuracy'] = (accuracy_data['correct_submits'] / accuracy_data['total_submits'] * 100).fillna(0)
+    else:
+        accuracy_data = submit_data.groupby('student_ID').size().to_frame('total_submits')
+        accuracy_data['accuracy'] = 0.0
+    
+    # 组合结果
+    for student_id in student_ids:
+        stats[student_id] = {
+            'overall_mastery': float(mastery_by_student.get(student_id, 0.0)),
+            'accuracy': float(accuracy_data.loc[student_id, 'accuracy']) if student_id in accuracy_data.index else 0.0,
+            'total_submits': int(accuracy_data.loc[student_id, 'total_submits']) if student_id in accuracy_data.index else 0
+        }
+    
+    return stats
+
+
 def stratified_sample_students(major: str, student_info: pd.DataFrame, 
                                 submit_records: pd.DataFrame, 
                                 title_info: pd.DataFrame,
@@ -233,6 +268,66 @@ def stratified_sample_students(major: str, student_info: pd.DataFrame,
             sampled.extend(random.sample(remaining_students, min(need, len(remaining_students))))
     
     return sampled[:sample_size]
+
+
+def get_unique_pattern_students(major: str, student_info: pd.DataFrame, 
+                                 submit_records: pd.DataFrame, 
+                                 title_info: pd.DataFrame,
+                                 student_patterns: Dict[str, str]) -> List[str]:
+    """获取每个专业-学习模式组合的唯一代表性学生"""
+    major_students = student_info[student_info['major'] == major]['student_ID'].tolist()
+    
+    if not major_students:
+        return []
+    
+    # 按学习模式分组（使用预计算的模式）
+    pattern_groups = {}
+    for student_id in major_students:
+        pattern = student_patterns.get(student_id, "未知型")
+        if pattern not in pattern_groups:
+            pattern_groups[pattern] = []
+        pattern_groups[pattern].append(student_id)
+    
+    # 每个学习模式只选择一个代表性学生
+    sampled = []
+    for pattern, students in pattern_groups.items():
+        # 随机选择一个学生作为该学习模式的代表
+        sampled.append(random.choice(students))
+    
+    return sampled
+
+
+def batch_calculate_learning_patterns(student_ids: List[str], 
+                                       submit_records: pd.DataFrame) -> Dict[str, str]:
+    """批量计算学生学习模式（优化性能）"""
+    patterns = {}
+    
+    # 一次性计算所有学生的统计信息
+    student_stats = submit_records[submit_records['student_ID'].isin(student_ids)].groupby('student_ID').agg({
+        'title_ID': ['count', 'nunique']
+    }).reset_index()
+    
+    student_stats.columns = ['student_ID', 'total_submits', 'unique_titles']
+    
+    for _, row in student_stats.iterrows():
+        student_id = row['student_ID']
+        unique_titles = row['unique_titles']
+        total_submits = row['total_submits']
+        repeat_rate = total_submits / unique_titles if unique_titles > 0 else 0
+        
+        if repeat_rate > 3:
+            patterns[student_id] = "反复练习型"
+        elif unique_titles > 30:
+            patterns[student_id] = "探索尝试型"
+        else:
+            patterns[student_id] = "稳步推进型"
+    
+    # 为没有提交记录的学生设置默认值
+    for student_id in student_ids:
+        if student_id not in patterns:
+            patterns[student_id] = "未知型"
+    
+    return patterns
 
 
 def build_sankey_data() -> Dict[str, Any]:
@@ -348,30 +443,45 @@ def build_sankey_data() -> Dict[str, Any]:
                     "extra": f"提交量占该知识点总提交量比例：{submit_ratio:.1f}%、该专业平均掌握度：{major_avg:.1f}%"
                 })
     
-    # ========== 第三级：学生个体节点（分层抽样） ==========
+    # ========== 预计算所有学生的学习模式（批量优化） ==========
+    all_student_ids = student_info['student_ID'].tolist()
+    student_patterns = batch_calculate_learning_patterns(all_student_ids, submit_records)
+    
+    # ========== 第三级：学生个体节点（每个专业-学习模式组合唯一） ==========
     student_nodes = {}  # 完整student_id -> 节点ID的映射
     sampled_students_by_major = {}
     student_counter = 0
     
     for major in all_majors:
-        sampled_students = stratified_sample_students(major, student_info, submit_records, title_info, 15)
+        sampled_students = get_unique_pattern_students(major, student_info, submit_records, title_info, student_patterns)
         sampled_students_by_major[major] = sampled_students
+    
+    # 收集所有被抽样的学生ID
+    all_sampled_students = []
+    for students in sampled_students_by_major.values():
+        all_sampled_students.extend(students)
+    
+    # 批量计算所有抽样学生的统计信息
+    student_stats = batch_calculate_student_stats(all_sampled_students, individual_knowledge, submit_records)
+    
+    # 创建学生节点
+    for major in all_majors:
+        sampled_students = sampled_students_by_major[major]
         
         for student_id in sampled_students:
             student_counter += 1
             node_id = f"s_{student_counter:03d}"  # 使用序号确保唯一性
             student_nodes[student_id] = node_id
             
-            # 计算学生信息
-            overall_mastery = calculate_student_overall_mastery(student_id, individual_knowledge)
-            accuracy_info = calculate_student_accuracy(student_id, submit_records)
-            learning_pattern = get_student_learning_pattern(student_id, submit_records, title_info)
+            # 使用预计算的统计信息
+            stats = student_stats.get(student_id, {'overall_mastery': 0.0, 'accuracy': 0.0, 'total_submits': 0})
+            learning_pattern = student_patterns.get(student_id, "未知型")
             
             major_name = get_major_name(major)
             nodes.append({
                 "id": node_id,
                 "category": 2,
-                "extra": f"专业：{major_name}、学习模式：{learning_pattern}、个人综合掌握度：{overall_mastery:.1f}%、正确率：{accuracy_info['accuracy']:.1f}%、总提交次数：{accuracy_info['total_submits']}次"
+                "extra": f"专业：{major_name}、学习模式：{learning_pattern}、个人综合掌握度：{stats['overall_mastery']:.1f}%、正确率：{stats['accuracy']:.1f}%、总提交次数：{stats['total_submits']}次"
             })
     
     # ========== 链路2：专业→学生 ==========
