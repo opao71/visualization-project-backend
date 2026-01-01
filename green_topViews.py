@@ -147,6 +147,22 @@ def get_major_category(major_code: str) -> str:
     return category_map.get(major_code, '其他类')
 
 
+def get_knowledge_name(knowledge_code: str) -> str:
+    """将知识点编码转换为知识点名称"""
+    knowledge_name_map = {
+        'r8S3g': '程序控制',
+        'm3D1v': '数据结构',
+        'b3C9s': '基础语法',
+        'g7R2j': '函数与模块',
+        'k4W1c': '异常处理',  # 调整位置：异常处理
+        's8Y2f': '文件操作',
+        't5V9e': '算法设计',
+        'y9W5d': '面向对象',  # 调整位置：面向对象
+        # 可以根据实际数据添加更多映射
+    }
+    return knowledge_name_map.get(knowledge_code, f"知识点{knowledge_code}")
+
+
 def get_student_learning_pattern(student_id: str, submit_records: pd.DataFrame, 
                                   title_info: pd.DataFrame) -> str:
     """根据提交行为判断学生学习模式（简化版）"""
@@ -347,6 +363,21 @@ def build_sankey_data() -> Dict[str, Any]:
     knowledge_nodes = {}
     all_knowledges = title_info['knowledge'].dropna().unique()
     
+    # 定义知识点显示顺序（避免字体重叠）
+    knowledge_order = {
+        'r8S3g': 1,  # 程序控制
+        't5V9e': 2,  # 算法设计
+        'm3D1v': 3,  # 数据结构
+        'y9W5d': 4,  # 面向对象（调整位置）
+        'k4W1c': 5,  # 异常处理（调整位置）
+        's8Y2f': 6,  # 文件操作
+        'g7R2j': 7,  # 函数与模块
+        'b3C9s': 8,  # 基础语法
+    }
+    
+    # 按定义的顺序排序知识点
+    all_knowledges = sorted(all_knowledges, key=lambda k: knowledge_order.get(k, 999))
+    
     for knowledge in all_knowledges:
         # 计算该知识点相关题目总量
         knowledge_titles = title_info[title_info['knowledge'] == knowledge]
@@ -362,6 +393,7 @@ def build_sankey_data() -> Dict[str, Any]:
         
         nodes.append({
             "id": node_id,
+            "name": get_knowledge_name(knowledge),  # 添加知识点名称用于显示
             "category": 0,
             "length_param": title_count,
             "extra": f"平均掌握度：{avg_mastery:.1f}%、关联题目数：{title_count}道、总分值：{int(total_score)}分"

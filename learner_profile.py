@@ -28,6 +28,20 @@ class LearnerProfileAnalyzer:
         self._submit_records = {}
         self._knowledge_mastery = None
     
+    def _get_knowledge_name(self, knowledge_code: str) -> str:
+        """将知识点编码转换为知识点名称"""
+        knowledge_name_map = {
+            'r8S3g': '程序控制',
+            'm3D1v': '数据结构',
+            'b3C9s': '基础语法',
+            'g7R2j': '函数与模块',
+            'k4W1c': '异常处理',
+            's8Y2f': '文件操作',
+            't5V9e': '算法设计',
+            'y9W5d': '面向对象',
+        }
+        return knowledge_name_map.get(knowledge_code, f"知识点{knowledge_code}")
+    
     def _load_student_info(self):
         """加载学生信息"""
         if self._student_info is None:
@@ -209,8 +223,8 @@ class LearnerProfileAnalyzer:
         # 添加前top_n个方法
         for idx, (method, count) in enumerate(top_methods.items(), 1):
             ratio = count / total_submits if total_submits > 0 else 0.0
-            # 使用方法字段本身作为方法名称，如果method是代码格式则保持原样
-            method_name = str(method) if method else f'方法{idx}'
+            # 使用方法映射函数获取友好的名称
+            method_name = self._get_method_name(str(method), idx)
             method_distribution.append({
                 'method': method,
                 'method_name': method_name,
@@ -302,7 +316,7 @@ class LearnerProfileAnalyzer:
                         
                         knowledge_stats.append({
                             'knowledge_id': knowledge_id,
-                            'knowledge_name': f'知识点{knowledge_id}',
+                            'knowledge_name': self._get_knowledge_name(knowledge_id),  # 使用映射函数
                             'mastery': round(mastery, 4),
                             'mastery_percentage': round(mastery * 100, 2),
                             'question_count': int(question_count),
@@ -351,7 +365,7 @@ class LearnerProfileAnalyzer:
             
             knowledge_stats.append({
                 'knowledge_id': knowledge_id,
-                'knowledge_name': f'知识点{knowledge_id}',
+                'knowledge_name': self._get_knowledge_name(knowledge_id),  # 使用映射函数
                 'mastery': round(mastery, 4),
                 'mastery_percentage': round(mastery * 100, 2),
                 'question_count': int(question_count),
@@ -721,7 +735,7 @@ class LearnerProfileAnalyzer:
 
             mastery_trend[knowledge_id] = {
                 'knowledge_id': knowledge_id,
-                'knowledge_name': f'知识点{knowledge_id}',
+                'knowledge_name': self._get_knowledge_name(knowledge_id),  # 使用映射函数
                 'series': series
             }
 

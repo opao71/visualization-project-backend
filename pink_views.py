@@ -38,6 +38,56 @@ def _normalize_column_name(df: pd.DataFrame, target: str) -> pd.DataFrame:
     return df
 
 
+def get_knowledge_name(knowledge_code: str) -> str:
+    """将知识点编码转换为知识点名称"""
+    knowledge_name_map = {
+        'r8S3g': '程序控制',
+        'm3D1v': '数据结构',
+        'b3C9s': '基础语法',
+        'g7R2j': '函数与模块',
+        'k4W1c': '面向对象',
+        's8Y2f': '文件操作',
+        't5V9e': '算法设计',
+        'y9W5d': '异常处理',
+        # 可以根据实际数据添加更多映射
+    }
+    return knowledge_name_map.get(knowledge_code, f"知识点{knowledge_code}")
+
+
+def get_method_name(method_code: str) -> str:
+    """将编程方法编码转换为方法名称"""
+    if not method_code or method_code == 'Method_other':
+        return '其他'
+    
+    # 提取方法编码（去掉 Method_ 前缀，取前5个字符）
+    if method_code.startswith('Method_'):
+        code = method_code[7:12]  # 取 Method_ 后面的5个字符
+    else:
+        code = method_code[:5] if len(method_code) >= 5 else method_code
+    
+    # 方法编码到名称的映射（根据实际数据调整）
+    method_name_map = {
+        '5Q4Ko': '方法1',
+        'Cj9Ya': '方法2',
+        'gj1NL': '方法3',
+        'm8vwG': '方法4',
+        'BXr9A': '方法5',
+        'TDFm': '方法1',
+        'ZL57': '方法2',
+        'kQPd': '方法3',
+        'YUoR': '方法4',
+    }
+    
+    # 尝试匹配完整编码或简化编码
+    if method_code in method_name_map:
+        return method_name_map[method_code]
+    elif code in method_name_map:
+        return method_name_map[code]
+    else:
+        # 如果找不到映射，返回格式化的名称
+        return f"方法{code}"
+
+
 @lru_cache(maxsize=1)
 def load_title_info() -> pd.DataFrame:
     df = pd.read_csv(TITLE_INFO_FILE, encoding='utf-8-sig')
@@ -106,6 +156,9 @@ def build_heatmap_payload() -> Dict[str, Any]:
     alias_map = load_title_alias_map()
     metrics_df = load_title_metrics().set_index('title_ID')
     x_labels = sorted(title_df['knowledge'].dropna().unique().tolist())
+    # 创建知识点编码到名称的映射
+    x_labels_display = [get_knowledge_name(code) for code in x_labels]  # 用于前端显示
+    
     y_titles = sorted(title_df['title_ID'].dropna().unique().tolist())
     y_labels = [alias_map.get(t, t) for t in y_titles]
     knowledge_index = {label: idx for idx, label in enumerate(x_labels)}
@@ -135,7 +188,8 @@ def build_heatmap_payload() -> Dict[str, Any]:
 
     return {
         'heatedConfig': {
-            'xAxisLabels': x_labels,
+            'xAxisLabels': x_labels_display,  # 返回知识点名称用于显示
+            'xAxisLabelsCode': x_labels,  # 保留原始编码用于后端查询
             'yAxisLabels': y_labels
         },
         'heatmapCoreData': heatmap_rows
@@ -183,9 +237,11 @@ def build_bubble_payload() -> Dict[str, Any]:
         memory_eff = ratio(overall_memory, row['avg_memory']) if pd.notna(row['avg_memory']) else 0.0
         comp_eff = round((time_eff + memory_eff) / 2, 1) if (time_eff > 0 or memory_eff > 0) else 0.0
         
+        knowledge_code = row['knowledge']
         bubble_data.append({
             'title_ID': row['title_ID'],
-            'knowledge': row['knowledge'],
+            'knowledge': knowledge_code,
+            'knowledge_name': get_knowledge_name(knowledge_code),  # 添加知识点名称
             'score': int(row['title_score']) if pd.notna(row['title_score']) else None,
             'submission_count': int(row['submission_count']),
             'timeconsume': round(float(row['avg_timeconsume']), 2) if pd.notna(row['avg_timeconsume']) else None,
@@ -196,9 +252,13 @@ def build_bubble_payload() -> Dict[str, Any]:
         })
 
     x_labels = sorted([label for label in title_df['knowledge'].dropna().unique().tolist()])
+    # 创建知识点编码到名称的映射
+    x_labels_display = [get_knowledge_name(code) for code in x_labels]  # 用于前端显示
+    
     return {
         'bubbleData': bubble_data,
-        'xAxisLabels': x_labels
+        'xAxisLabels': x_labels_display,  # 返回知识点名称用于显示
+        'xAxisLabelsCode': x_labels  # 保留原始编码用于后端查询
     }
 
 
@@ -233,10 +293,11 @@ def build_state_trends_payload() -> Dict[str, Any]:
     if records.empty:
         # 即使没有提交记录，也要返回知识点标签
         knowledge_labels = sorted(title_meta['knowledge'].dropna().unique().tolist())
+        knowledge_labels_display = [get_knowledge_name(code) for code in knowledge_labels]  # 用于前端显示
         return {
             'dimensionData': {
                 'time': {'xLabels': [], 'stateData': []},
-                'knowledge': {'xLabels': knowledge_labels, 'stateData': []},
+                'knowledge': {'xLabels': knowledge_labels_display, 'stateData': []},
                 'method': {'xLabels': [], 'stateData': []}
             }
         }
@@ -266,10 +327,16 @@ def build_state_trends_payload() -> Dict[str, Any]:
     knowledge_df = merged.dropna(subset=['knowledge']).copy()
     knowledge_labels = sorted(knowledge_df['knowledge'].unique().tolist())
     knowledge_section = _build_state_series(knowledge_df, 'knowledge', knowledge_labels)
+    # 将xLabels替换为知识点名称
+    knowledge_labels_display = [get_knowledge_name(code) for code in knowledge_labels]
+    knowledge_section['xLabels'] = knowledge_labels_display
 
     method_df = merged.dropna(subset=['method']).copy()
     method_labels = sorted(method_df['method'].unique().tolist())
     method_section = _build_state_series(method_df, 'method', method_labels)
+    # 将method的xLabels替换为友好的名称
+    method_labels_display = [get_method_name(code) for code in method_labels]
+    method_section['xLabels'] = method_labels_display
 
     return {
         'dimensionData': {

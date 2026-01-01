@@ -141,25 +141,126 @@ def load_csv_if_exists(file_path, cache_key=None):
             return None
     return None
 
+def get_major_name(major_code: str) -> str:
+    """将专业编号转换为专业名称"""
+    major_name_map = {
+        'J78901': '计算机科学与技术',
+        'J87654': '软件工程',
+        'J23517': '数据科学与大数据技术',
+        'J40192': '人工智能',
+        'J57489': '网络工程',
+    }
+    return major_name_map.get(major_code, f"专业{major_code}")
+
+
+def get_knowledge_name(knowledge_code: str) -> str:
+    """将知识点编码转换为知识点名称"""
+    knowledge_name_map = {
+        'r8S3g': '程序控制',
+        'm3D1v': '数据结构',
+        'b3C9s': '基础语法',
+        'g7R2j': '函数与模块',
+        'k4W1c': '面向对象',
+        's8Y2f': '文件操作',
+        't5V9e': '算法设计',
+        'y9W5d': '异常处理',
+    }
+    return knowledge_name_map.get(knowledge_code, f"知识点{knowledge_code}")
+
+
+def get_method_name(method_code: str) -> str:
+    """将编程方法编码转换为方法名称"""
+    # 从完整的方法ID中提取简化的编码（如 Method_5Q4KoXthUuYz3bvrTDFm -> 5Q4Ko）
+    # 或者直接使用映射
+    if not method_code or method_code == 'Method_other':
+        return '其他'
+    
+    # 提取方法编码（去掉 Method_ 前缀，取前5个字符）
+    if method_code.startswith('Method_'):
+        code = method_code[7:12]  # 取 Method_ 后面的5个字符
+    else:
+        code = method_code[:5] if len(method_code) >= 5 else method_code
+    
+    # 方法编码到名称的映射（根据实际数据调整）
+    method_name_map = {
+        '5Q4Ko': '方法1',
+        'Cj9Ya': '方法2',
+        'gj1NL': '方法3',
+        'm8vwG': '方法4',
+        'BXr9A': '方法5',
+        'TDFm': '方法1',
+        'ZL57': '方法2',
+        'kQPd': '方法3',
+        'YUoR': '方法4',
+    }
+    
+    # 尝试匹配完整编码或简化编码
+    if method_code in method_name_map:
+        return method_name_map[method_code]
+    elif code in method_name_map:
+        return method_name_map[code]
+    else:
+        # 如果找不到映射，返回格式化的名称
+        return f"方法{code}"
+
 @app.route('/api/classes', methods=['GET'])
 def get_classes():
-    """获取所有班级列表"""
+    """获取所有专业列表（返回名称和编号）"""
     df = pd.read_csv(STUDENT_INFO_FILE)
-    classes = sorted(df['major'].unique().tolist())
+    majors = sorted(df['major'].unique().tolist())
+    
+    # 返回包含名称和编号的对象列表，name用于前端显示
+    classes = [
+        {
+            'code': major,
+            'name': get_major_name(major)  # 前端直接显示这个name
+        }
+        for major in majors
+    ]
     return jsonify(classes)
 
 @app.route('/api/students', methods=['GET'])
 def get_students():
-    """获取所有学生列表"""
+    """获取所有学生列表（返回友好显示名称）"""
     df = pd.read_csv(STUDENT_INFO_FILE)
-    students = df[['student_ID', 'major']].to_dict('records')
+    
+    students = []
+    for idx, row in df.iterrows():
+        student_id = row['student_ID']
+        major_code = row['major']
+        
+        # 生成友好的显示名称（使用序号 + ID前6位）
+        display_name = f"学生{idx+1:04d} ({student_id[:6]}...)"
+        
+        students.append({
+            'student_ID': student_id,
+            'major_code': major_code,
+            'major_name': get_major_name(major_code),
+            'display_name': display_name  # 前端显示这个
+        })
+    
     return jsonify(students)
 
 @app.route('/api/students/<class_name>', methods=['GET'])
 def get_students_by_class(class_name):
-    """根据班级获取学生列表"""
+    """根据专业获取学生列表（返回友好显示名称）"""
     df = pd.read_csv(STUDENT_INFO_FILE)
-    students = df[df['major'] == class_name][['student_ID', 'major']].to_dict('records')
+    class_students = df[df['major'] == class_name].reset_index()
+    
+    students = []
+    for idx, row in class_students.iterrows():
+        student_id = row['student_ID']
+        
+        # 生成友好的显示名称（在该专业内的序号）
+        display_name = f"学生{idx+1:04d} ({student_id[:6]}...)"
+        
+        students.append({
+            'student_ID': student_id,
+            'major_code': class_name,
+            'major_name': get_major_name(class_name),
+            'display_name': display_name  # 前端显示这个
+        })
+    
     return jsonify(students)
 
 
@@ -375,9 +476,12 @@ def get_method_preference():
                     if not student_data.empty:
                         method_distribution = []
                         for _, row in student_data.iterrows():
+                            method_code = str(row['method'])
+                            # 使用映射函数获取友好的方法名称
+                            method_name = get_method_name(method_code) if method_code != 'Method_other' else '其他'
                             method_distribution.append({
-                                'method': str(row['method']),
-                                'method_name': str(row['method_name']),
+                                'method': method_code,
+                                'method_name': method_name,
                                 'count': int(row['count']),
                                 'ratio': float(row['ratio']),
                                 'percentage': float(row['percentage'])
@@ -393,9 +497,12 @@ def get_method_preference():
                     if not class_data.empty:
                         method_distribution = []
                         for _, row in class_data.iterrows():
+                            method_code = str(row['method'])
+                            # 使用映射函数获取友好的方法名称
+                            method_name = get_method_name(method_code) if method_code != 'Method_other' else '其他'
                             method_distribution.append({
-                                'method': str(row['method']),
-                                'method_name': str(row['method_name']),
+                                'method': method_code,
+                                'method_name': method_name,
                                 'count': int(row['count']),
                                 'ratio': float(row['ratio']),
                                 'percentage': float(row['percentage'])
@@ -427,9 +534,12 @@ def get_knowledge_mastery():
                 if not student_data.empty:
                     knowledge_stats = []
                     for _, row in student_data.iterrows():
+                        knowledge_id = str(row['knowledge_id'])
+                        # 使用映射函数获取知识点名称，如果CSV中有knowledge_name但格式不对，则使用映射
+                        knowledge_name = get_knowledge_name(knowledge_id) if knowledge_id else str(row.get('knowledge_name', ''))
                         knowledge_stats.append({
-                            'knowledge_id': str(row['knowledge_id']),
-                            'knowledge_name': str(row['knowledge_name']),
+                            'knowledge_id': knowledge_id,
+                            'knowledge_name': knowledge_name,
                             'mastery': float(row['mastery']),
                             'mastery_percentage': float(row['mastery_percentage']),
                             'question_count': int(row['question_count']),
@@ -684,9 +794,12 @@ def get_comprehensive_bluebox1():
         if 'method_distribution' in tab3_raw:
             method_distribution = []
             for item in tab3_raw['method_distribution']:
+                method_code = item.get('method', '')
+                # 使用映射函数获取友好的方法名称
+                method_name = get_method_name(method_code) if method_code != 'Method_other' else '其他'
                 method_distribution.append({
-                    'method': item.get('method', ''),
-                    'method_name': item.get('method_name', ''),
+                    'method': method_code,
+                    'method_name': method_name,
                     'count': item.get('count', 0),
                     'ratio': item.get('ratio', 0.0),
                     'percentage': item.get('percentage', 0.0)
