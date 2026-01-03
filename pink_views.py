@@ -88,6 +88,33 @@ def get_method_name(method_code: str) -> str:
         return f"方法{code}"
 
 
+def get_sub_knowledge_name(sub_knowledge_code: str) -> str:
+    """将子知识点编码转换为子知识点名称"""
+    if not sub_knowledge_code or pd.isna(sub_knowledge_code) or sub_knowledge_code == '':
+        return '无'
+    
+    # 提取子知识点编码的前5个字符作为主要标识
+    code = sub_knowledge_code.split('_')[0][:5] if '_' in sub_knowledge_code else sub_knowledge_code[:5]
+    
+    # 子知识点编码到名称的映射
+    sub_knowledge_map = {
+        't5V9e': '递归算法',
+        'e1k6c': '贪心算法',
+        'p8H2w': '动态规划',
+        'd3F7k': '排序算法',
+        'w9L4m': '搜索算法',
+        'q2N8v': '图算法',
+        # 可以根据实际数据添加更多映射
+    }
+    
+    # 尝试匹配
+    if code in sub_knowledge_map:
+        return sub_knowledge_map[code]
+    else:
+        # 如果找不到映射，返回格式化的编码
+        return f"子知识点{code}"
+
+
 @lru_cache(maxsize=1)
 def load_title_info() -> pd.DataFrame:
     df = pd.read_csv(TITLE_INFO_FILE, encoding='utf-8-sig')
@@ -169,6 +196,7 @@ def build_heatmap_payload() -> Dict[str, Any]:
         title_id = row['title_ID']
         knowledge = row['knowledge']
         sub_knowledge = row.get('sub_knowledge', '')
+        sub_knowledge_name = get_sub_knowledge_name(sub_knowledge)  # 转换子知识点名称
         metric_row = metrics_df.loc[title_id] if title_id in metrics_df.index else None
         match_index = int(metric_row['match_index']) if metric_row is not None else 0
         correct_rate = float(metric_row['correct_rate']) if metric_row is not None else 0.0
@@ -180,7 +208,7 @@ def build_heatmap_payload() -> Dict[str, Any]:
             alias_map.get(title_id, title_id),
             title_id,
             knowledge,
-            sub_knowledge,
+            sub_knowledge_name,  # 使用子知识点名称而不是编码
             match_index,
             correct_rate,
             discrimination
@@ -231,15 +259,19 @@ def build_bubble_payload() -> Dict[str, Any]:
             return 0.0
         return round((float(baseline) / float(value)) * 100, 1)
 
+    # 获取题目别名映射
+    alias_map = load_title_alias_map()
+    
     bubble_data = []
     for _, row in agg.iterrows():
         time_eff = ratio(overall_time, row['avg_timeconsume']) if pd.notna(row['avg_timeconsume']) else 0.0
         memory_eff = ratio(overall_memory, row['avg_memory']) if pd.notna(row['avg_memory']) else 0.0
         comp_eff = round((time_eff + memory_eff) / 2, 1) if (time_eff > 0 or memory_eff > 0) else 0.0
         
+        title_id = row['title_ID']
         knowledge_code = row['knowledge']
         bubble_data.append({
-            'title_ID': row['title_ID'],
+            'title_ID': alias_map.get(title_id, title_id),  # 使用题目别名
             'knowledge': knowledge_code,
             'knowledge_name': get_knowledge_name(knowledge_code),  # 添加知识点名称
             'score': int(row['title_score']) if pd.notna(row['title_score']) else None,
